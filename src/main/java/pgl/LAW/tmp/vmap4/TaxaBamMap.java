@@ -53,10 +53,10 @@ public class TaxaBamMap extends AppAbstract {
         BufferedReader reader = IOUtils.getTextReader(bamFiles);
         List<String> bamList = new ArrayList<>();
         String line;
-        while (!((line = reader.readLine()).isEmpty())) {
+        while ((line = reader.readLine()) != null && !line.isEmpty()) {
             bamList.add(line);
         }
-        return (String[]) bamList.toArray();
+        return bamList.toArray(new String[0]);
     }
 
     private static File findBamBasedOnDepth(List<File> bams, File depth) {
@@ -97,6 +97,16 @@ public class TaxaBamMap extends AppAbstract {
 
     }
 
+    private void writeHeaderIfNeeded(String outFile) throws IOException {
+        File file = new File(outFile);
+        boolean needHeader = !file.exists() || file.length() == 0;
+        if (needHeader) {
+            try (BufferedWriter bw = new BufferedWriter(new FileWriter(file, true))) {
+                bw.write("Taxa\tCoverage-Of-All-Bams\tBams(A list of bams of the taxon, seperated by the delimiter of Tab)\n");
+            }
+        }
+    }
+
     private void createTaxaBamMap() {
         String cmd = "samtools view -H ";
         List<File> depthList = IOUtils.getFileListInDirContains(depthS, "summary");
@@ -105,7 +115,8 @@ public class TaxaBamMap extends AppAbstract {
                 BufferedWriter bw = new BufferedWriter(new FileWriter(outFile, true));
                 BufferedWriter bw1 = new BufferedWriter(new FileWriter(taxaRunFile, true))
         ) {   // append content to the file before
-            if (bamFiles.isEmpty()) {
+            writeHeaderIfNeeded(outFile);
+            if (bamFiles == null || bamFiles.isEmpty()) {
                 bamList = getPureBamFiles(IOUtils.getFileListInDirContains(bamS, "bam"));
             } else {
                 String[] bamFiles = getBamFilesFromFile();
@@ -133,8 +144,19 @@ public class TaxaBamMap extends AppAbstract {
                         //System.out.println(f.get().taxa);
                         //System.out.println(f.get().taxa + "\t" + elements[3] + "\t" + bam.getAbsolutePath());
                         tmpBamHeader = f.get();
-                        bw.write(tmpBamHeader.runNumber + "\t" + elements[3] + "\t" + bam.getAbsolutePath() + "\n");
-                        bw1.write(tmpBamHeader.taxa + "\t" + tmpBamHeader.runNumber + "\n");
+                        if (tmpBamHeader.taxa != null) {
+                            if (tmpBamHeader.taxa.equals("Triticum")) {
+                                bw.write(tmpBamHeader.bamId + "\t" + elements[3] + "\t" + bam.getAbsolutePath() + "\n");
+                                continue;
+                            }
+                            bw.write(tmpBamHeader.taxa + "\t" + elements[3] + "\t" + bam.getAbsolutePath() + "\n");
+                        } else if (tmpBamHeader.bamId != null) {
+                            bw.write(tmpBamHeader.bamId + "\t" + elements[3] + "\t" + bam.getAbsolutePath() + "\n");
+                        } else {
+                            System.err.println("There is a sample without taxa and run number: " + bam.getName());
+                        }
+
+                        bw1.write(tmpBamHeader.taxa + "\t" + tmpBamHeader.runNumber + "\t" + tmpBamHeader.bamId + "\n");
                     }
                 }
                 br.close();
@@ -157,6 +179,7 @@ public class TaxaBamMap extends AppAbstract {
             BamHeader bh;
             String taxon = null;
             String run = null;
+            String bamId = null;
             try {
                 Runtime rt = Runtime.getRuntime();
                 Process p = rt.exec(command);
@@ -178,13 +201,16 @@ public class TaxaBamMap extends AppAbstract {
                         String[] elements = temp.split("\t");
                         for (String element : elements) {
                             if (element.startsWith("CL") && element.endsWith(".gz")) {
-                                run = temp.split("/")[temp.split("/").length - 1].split("_")[0];
+                                run = element.split("/")[element.split("/").length - 1].split("_R2")[0];
                                 break;
+                            }
+                            if (element.startsWith("CL") && element.endsWith(".bam")) {
+                                bamId = element.split("\\s+")[element.split("\\s+").length - 1].split(".")[0];
                             }
                         }
                     }
                 }
-                bh = new BamHeader(taxon, run);
+                bh = new BamHeader(taxon, run, bamId);
                 p.waitFor();
             } catch (IOException e) {
                 throw new RuntimeException(e);
